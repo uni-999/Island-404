@@ -1,21 +1,63 @@
 using UnityEngine;
 
+[RequireComponent(typeof(Rigidbody))]
 public class SnakeController : MonoBehaviour
 {
-    public float speed = 10f;
-    public float turnSpeed = 1.8f;
-    public Transform[] bodySegments; // ���� ��������� �������� � ����������
+    public float forwardForce = 15f;     // Сила вперёд (газ)
+    public float maxSpeed = 20f;         // Максимальная скорость (опционально)
+    public float turnTorque = 100f;      // Сила поворота
+    public float wiggleForce = 3f;       // Волнообразное ползание змеи
+    public float wiggleFreq = 5f;        // Частота волны
 
-    void Update()
+    public Transform[] bodySegments;     // Массив сегментов тела (drag в инспекторе)
+
+    private Rigidbody rb;
+
+    // Мультипликаторы
+    public float speedMult = 1.5f;       // От OffTrackDetector (on-track ускорение)
+    public float boostMult = 1f;         // От бонусов (ускорение)
+    public float slipTimeLeft = 0f;      // От шампуня (занос + замедление)
+
+    void Start()
     {
-        // ������� ��������� ��� A/D
-        float horizontal = Input.GetAxis("Horizontal");
-        transform.Rotate(0, horizontal * turnSpeed, 0);
+        rb = GetComponent<Rigidbody>();
+    }
 
-        // �������� �����
-        transform.Translate(Vector3.forward * speed * Time.deltaTime);
+    void FixedUpdate()
+    {
+        float vertical = Input.GetAxis("Vertical");     // W/S = газ/тормоз
+        float horizontal = Input.GetAxis("Horizontal"); // A/D = поворот
 
-        // ���������� ���������
+        // Движение вперёд/назад
+        if (Mathf.Abs(vertical) > 0.01f)
+        {
+            Vector3 force = transform.forward * forwardForce * vertical * speedMult * boostMult;
+            rb.AddForce(force);
+
+            // Лимит скорости
+            if (rb.linearVelocity.magnitude > maxSpeed * speedMult * boostMult)
+            {
+                rb.linearVelocity = rb.linearVelocity.normalized * (maxSpeed * speedMult * boostMult);
+            }
+        }
+
+        // Поворот
+        rb.AddTorque(Vector3.up * horizontal * turnTorque);
+
+        // Волнообразное ползание (wiggle)
+        float wiggle = Mathf.Sin(Time.time * wiggleFreq) * wiggleForce;
+        rb.AddForce(transform.right * wiggle);
+
+        // Slip от шампуня (занос + низкое сцепление)
+        if (slipTimeLeft > 0)
+        {
+            slipTimeLeft -= Time.fixedDeltaTime;
+            rb.linearDamping = 0.5f;  // Скользко
+            rb.AddTorque(Vector3.up * Random.Range(-turnTorque * 3f, turnTorque * 3f));  // Random занос
+            if (slipTimeLeft <= 0) rb.linearDamping = 2f;  // Вернуть нормальный drag
+        }
+
+        // Тело следует за головой (Lerp для плавности)
         FollowBody();
     }
 
@@ -23,23 +65,31 @@ public class SnakeController : MonoBehaviour
     {
         if (bodySegments.Length == 0) return;
 
-        // ������ ������� ������� �� �������
-        bodySegments[0].position = Vector3.Lerp(
-            bodySegments[0].position,
-            transform.position - transform.forward * 1f,
-            0.3f
-        );
-        bodySegments[0].forward = transform.forward;
-
-        // ��������� ������� �� �����������
-        for (int i = 1; i < bodySegments.Length; i++)
+        for (int i = 0; i < bodySegments.Length; i++)
         {
-            bodySegments[i].position = Vector3.Lerp(
-                bodySegments[i].position,
-                bodySegments[i - 1].position - bodySegments[i - 1].forward * 1f,
-                0.3f
-            );
-            bodySegments[i].forward = bodySegments[i - 1].forward;
+            Transform target = (i == 0) ? transform : bodySegments[i - 1];
+            Vector3 targetPos = target.position - target.forward * 1f;
+
+            bodySegments[i].position = Vector3.Lerp(bodySegments[i].position, targetPos, 20f * Time.deltaTime);
+            bodySegments[i].rotation = Quaternion.Lerp(bodySegments[i].rotation, target.rotation, 20f * Time.deltaTime);
         }
+    }
+
+    // Методы для бонусов
+    public void ApplyBoost(float mult, float duration)
+    {
+        boostMult = mult;
+        CancelInvoke("ResetBoost");
+        Invoke("ResetBoost", duration);
+    }
+
+    void ResetBoost()
+    {
+        boostMult = 1f;
+    }
+
+    public void ApplySlip(float duration)
+    {
+        slipTimeLeft = duration;
     }
 }
